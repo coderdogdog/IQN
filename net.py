@@ -20,63 +20,50 @@ class IQN_Network(nn.Module):
     def __init__(self, state_dim: int, action_dim: int, hid_dim: int=256, embed_dim: int=64):
         super().__init__()
 
-        self.embed_dim = embed_dim
-        self.action_dim = action_dim
+        self.hid_dim = hid_dim
+        self.n_cos = embed_dim  # 余弦基个数（不再是组合维度）
 
-        # 状态特征提取层
+        # ---- 1. 状态编码 psi(s): (B, state_dim) -> (B, hid_dim) ----
         self.state_fc = nn.Sequential(
-            nn.Linear(state_dim, hid_dim),
+            layer_init(nn.Linear(state_dim, hid_dim)),
             nn.ReLU(),
-            nn.Linear(hid_dim, hid_dim),
+            layer_init(nn.Linear(hid_dim, hid_dim)),
             nn.ReLU(),
-            nn.Linear(hid_dim, embed_dim)
+            layer_init(nn.Linear(hid_dim, hid_dim)),
+            nn.ReLU(),
         )
 
-        # 分位数嵌入层：输入 tau (batch, N) -> 输出 phi (batch, N, embed_dim)
-        # 注意：这里使用 cos 编码，然后通过线性层 + ReLU
-        # 编码后映射到 embed_dim 再 --> hid_dim
-        self.embed_fc = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim),
+        # ---- 2. 分位数嵌入 phi(tau): (B, N, n_cos) -> (B, N, hid_dim) ----
+        # phi_j(tau) = ReLU( sum_i w_ji cos(pi*i*tau) )，与原论文一致
+        self.phi_fc = nn.Sequential(
+            layer_init(nn.Linear(self.n_cos, hid_dim)),
             nn.ReLU(),
-            nn.Linear(embed_dim, embed_dim)
         )
 
-        # 融合后输出层：输入 (state_feat * phi) (batch, N, hidden_dim) -> (batch, N, action_dim)
-        self.output_fc = nn.Linear(embed_dim, action_dim)
+        # ---- 3. 融合 + 价值头: (B, N, hid_dim) -> (B, N, action_dim) ----
+        self.head = nn.Sequential(
+            layer_init(nn.Linear(hid_dim, hid_dim)),
+            nn.ReLU(),
+            layer_init(nn.Linear(hid_dim, action_dim), gain=1.0),  # 输出层增益 1.0
+        )
+
+        # 余弦频率 i = 1..n_cos（从 0 起也可，只是多一个常数基，线性层能自适应）
+        i = torch.arange(1, self.n_cos + 1, dtype=torch.float32).view(1, 1, -1)
+        self.register_buffer("cos_i", i)    # (1, 1, n_cos)，随 .to(device) 一起迁移
 
     def forward(self, state, tau):
         """
-        state: (batch, state_dim)
-        tau:   (batch, N)   N 为采样的分位数个数（训练时 N=N_QUANTILES，动作选择时 N=N_QUANTILES_ACTION）
-        返回: (batch, N, action_dim)
+        state: (B, state_dim)
+        tau:   (B, N)，N 可为训练/目标/动作选择任意数量的分位数
+        返回:  (B, N, action_dim)
         """
-        # batch_size = state.size(0)
-        # N = tau.size(1)
+        psi = self.state_fc(state)  # (B, hid)
 
-        # 1. 状态特征
-        state_feat = self.state_fc(state)  # (batch, embed_dim)
+        tau = tau.unsqueeze(-1)  # (B, N, 1)
+        cos_embed = torch.cos(np.pi * self.cos_i * tau)  # (B, N, n_cos)
+        phi = self.phi_fc(cos_embed)  # (B, N, hid)
 
-        # 2. 分位数嵌入 (余弦编码 + 线性映射)
-        # 余弦编码：phi_j(tau) = cos(pi * i * tau)         i from 0 to embed_dim-1
-        # 此处我们使用 PyTorch 实现，输入 tau 形状 (batch, N)
-        # 扩展维度用于广播
-        tau_expanded = tau.unsqueeze(-1)  # (batch, N, 1)
-        i = torch.arange(self.embed_dim, device=tau.device).float().view(1, 1, -1)  # (1,1,embed_dim)
-        # 计算 cos(pi * i * tau)
-        # 广播相乘
-        cos_embed = torch.cos(np.pi * i * tau_expanded)  # (batch, N, embed_dim)
-
-        # 通过线性层 + ReLU
-        phi = self.embed_fc(cos_embed)          # (batch, N, embed_dim)
-
-        # 3. 融合：逐元素乘积（门控机制）-> 广播相乘
-        # 这里要求 state_feat.shape[-1] = phi.shape[-1] 直接相乘
-
-        state_feat_exp = state_feat.unsqueeze(1)  # (batch, 1, embed_dim)
-        combined = state_feat_exp * phi  # (batch, N, embed_dim)
-
-        # 4. 输出层，得到每个分位数的值
-        out = self.output_fc(combined)  # (batch, N, action_dim)
+        h = psi.unsqueeze(1) * phi  # (B, N, hid) 逐元素门控融合
+        out = self.head(h)  # (B, N, action_dim)
         return out
-
 

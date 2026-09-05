@@ -48,12 +48,12 @@ def parse_args():
 
     parser.add_argument("--n_quantile", type=int, default=32, help="训练时采样的分位数个数 N")
     parser.add_argument("--n_quantile_target", type=int, default=32, help="目标网络中采样的分位数个数 N'")
-    parser.add_argument("--m_quantile_eval", type=int, default=8, help="动作选择时采样的分位数个数 M")
+    parser.add_argument("--m_quantile_eval", type=int, default=32, help="动作选择时采样的分位数个数 M")
 
     # 训练
     parser.add_argument("--epsilon_start", type=float, default=0.8, help="epsilon 初始值")
     parser.add_argument("--epsilon_end", type=float, default=0.01, help="epsilon 最终值")
-    parser.add_argument("--total_decay_steps", type=int, default=30_000, help="epsilon 衰减总步数")
+    parser.add_argument("--total_decay_steps", type=int, default=30_000, help="epsilon 衰减总步数 按更新次数计")
 
     parser.add_argument("--warmup_steps", type=int, default=5000, help="先预热 随机选取动作积累经验 先走几步")
     parser.add_argument("--max_env_steps", type=int, default=1_000_000, help="环境最大运行总步数")

@@ -59,10 +59,11 @@ def wang_transform(u, lamb=0.0):
     """
     if lamb == 0.0:
         return u
-    # 使用 torch 的分布函数
-    normal = torch.distributions.Normal(0, 1)
-    # icdf 是分位数函数（逆 CDF）
-    return normal.cdf(normal.icdf(u) + lamb)
+
+    # torch.special.ndtri(u)    标准正态分布累积分布函数 (CDF) 的反函数
+    # torch.special.ndtr        标准正态 CDF
+
+    return torch.special.ndtr(torch.special.ndtri(u) + lamb)
 
 
 # ------------------------- 智能体 -------------------------
@@ -139,7 +140,7 @@ class IQN_Agent:
 
         # 分位数权重: |τ - 1_{errors < 0}|
         # taus: (batch, N) -> (B, N, N')
-        taus_expanded = taus.unsqueeze(-1).expand(-1, -1, self.n_quantile_target)  # (batch, N, N')
+        taus_expanded = taus.unsqueeze(-1).expand(-1, -1, errors.size(-1))  # (batch, N, N')
         indicators = (errors < 0).float()  # (B, N, N')  errors < 0 的元素变成 1.0
         # quantile_weights 元素是 |τ - 1|  或  |τ - 0|
         quantile_weights = torch.abs(taus_expanded - indicators)  # (B, N, N')
@@ -150,37 +151,25 @@ class IQN_Agent:
 
     # ----------------------------------- 选择动作 -----------------------------------
     def select_action(self, state, explore=True):
+
+        if explore:
+            # 生成[0, 1) 区间的均匀分布随机浮点数
+            if np.random.rand() < self.epsilon:
+                action = np.random.randint(0, self.action_dim)
+                return action
+
         with torch.no_grad():
-            if explore:
-                # 生成[0, 1) 区间的均匀分布随机浮点数
-                if np.random.rand() < self.epsilon:
-                    action = np.random.randint(0, self.action_dim)
-                else:
+            state = torch.tensor(state.reshape(1, -1), dtype=torch.float32).to(self.dvc)
 
-                    state = torch.tensor(state.reshape(1, -1), dtype=torch.float32).to(self.dvc)
+            # 采样 M 个 u，进行风险扭曲
+            u = torch.rand(1, self.m_quantile_eval, device=self.dvc)  # (1, M)
+            tau = wang_transform(u, self.risk_lambda)  # (1, M)
 
-                    # 采样 M 个 u，进行风险扭曲
-                    u = torch.rand(1, self.m_quantile_eval, device=self.dvc)  # (1, M)
-                    tau = wang_transform(u, self.risk_lambda)  # (1, M)
+            z = self.Q_net(state, tau)      # (1, M, action_dim)
+            # 沿 M 维平均得到 Q_beta (1, action_dim)
+            q_beta = z.mean(dim=1)          # (1, action_dim)
 
-                    z = self.Q_net(state, tau)      # (1, M, action_dim)
-                    # 沿 M 维平均得到 Q_beta (1, action_dim)
-                    q_beta = z.mean(dim=1)          # (1, action_dim)
-
-                    action = q_beta.argmax(dim=1).item()
-            else:
-
-                state = torch.tensor(state.reshape(1, -1), dtype=torch.float32).to(self.dvc)
-
-                # 采样 M 个 u，进行风险扭曲
-                u = torch.rand(1, self.m_quantile_eval, device=self.dvc)  # (1, M)
-                tau = wang_transform(u, self.risk_lambda)  # (1, M)
-
-                z = self.Q_net(state, tau)  # (1, M, action_dim)
-                # 沿 M 维平均得到 Q_beta (1, action_dim)
-                q_beta = z.mean(dim=1)  # (1, action_dim)
-
-                action = q_beta.argmax(dim=1).item()
+            action = q_beta.argmax(dim=1).item()
 
         return action
 
@@ -223,7 +212,7 @@ class IQN_Agent:
 
             tau_sel = torch.rand(batch_size, self.m_quantile_eval, device=self.dvc)
             tau_sel = wang_transform(tau_sel, self.risk_lambda)
-            z_next_all = self.targetQ_net(next_state, tau_sel)          # (batch, M, action_dim)
+            z_next_all = self.Q_net(next_state, tau_sel)          # (batch, M, action_dim)
             q_next = z_next_all.mean(dim=1)                            # (batch, action_dim)
             next_action = q_next.argmax(dim=1, keepdim=True)          # (batch,1)
 
