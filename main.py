@@ -40,7 +40,7 @@ def parse_args():
     parser.add_argument("--load_name", type=str, default="trained_10000.pth", help="导入模型文件名")
 
     # 环境
-    parser.add_argument("--env_name", type=str, default="LunarLander-v3",
+    parser.add_argument("--env_name", type=str, default="CartPole-v1",
                         help="LunarLander-v3, CartPole-v1, MountainCar-v0")
 
     parser.add_argument("--kappa", type=float, default=1.0, help="Huber损失阈值")
@@ -68,7 +68,7 @@ def parse_args():
 
     parser.add_argument("--buffer_max_len", type=int, default=int(1e6), help="经验回放池长度")
     parser.add_argument("--batch_size", type=int, default=256, help="训练时batch_size")
-    parser.add_argument("--lr", type=float, default=1e-4, help="神经网络学习率")
+    parser.add_argument("--lr", type=float, default=5e-4, help="神经网络学习率")
     parser.add_argument("--gamma", type=float, default=0.99, help="折扣因子")
 
     parser.add_argument("--update_tau", type=float, default=0.01, help="滑动更新")

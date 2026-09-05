@@ -68,7 +68,7 @@ def train_agent(args):
     total_steps = 0
     decay_steps = 0         # epsilon 衰减步数
 
-    best_avg_reward = -float("inf")
+    best_avg_reward = -float(1000)
     print("[新训练] 开始训练...")
 
     best_path = model_dir + "best_scores_" + str(int(best_avg_reward)) + ".pth"
